@@ -1,0 +1,9 @@
+/** @format */
+
+body {
+  margin: 0;
+  position: absolute;
+  background-color: blue;
+  width: 100%;
+  height: 100%;
+}

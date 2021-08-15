@@ -1,5 +1,8 @@
 /** @format */
-import * as THREE from 'three';
+import * as THREE from 'three/build/three.module.js';
+
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls';
 
 import './projectedcss.css';
 
@@ -10,6 +13,8 @@ export class ProjectedView {
     this.renderer = new THREE.WebGLRenderer();
 
     this.rootHtml = this.renderer.domElement;
+
+    this.renderingPlane = true;
   }
 
   html() {
@@ -17,7 +22,43 @@ export class ProjectedView {
   }
 
   tick() {
-    this.model.tick(this.renderer);
+    if (this.renderingPlane) {
+      this.renderer.setRenderTarget(this.model.bufferTexture);
+      this.renderer.clear();
+      this.renderer.render(
+        this.model.sceneImages,
+        this.model.perspectiveCamera
+      );
+
+      this.renderer.setRenderTarget(null);
+      this.renderer.clear();
+      this.renderer.render(this.model.scenePlane, this.model.orthoCamera);
+    } else {
+      const renderer_width = window.innerWidth;
+      const renderer_height = window.innerHeight;
+
+      this.renderer.setClearColor(0xffffff);
+      this.renderer.setScissorTest(false);
+      this.renderer.clear();
+
+      this.renderer.setClearColor(0xe0e0e0);
+      this.renderer.setScissorTest(true);
+
+      this.renderer.setViewport(0, 0, renderer_width, renderer_height);
+      this.renderer.setScissor(0, 0, renderer_width, renderer_height);
+      this.renderer.render(
+        this.model.sceneImages,
+        this.model.perspectiveCamera
+      );
+
+      const left = renderer_width * 0.8;
+      const top = 0;
+      const width = renderer_width * 0.2;
+      const height = renderer_height * 0.2;
+      this.renderer.setViewport(left, top, width, height);
+      this.renderer.setScissor(left, top, width, height);
+      this.renderer.render(this.model.scenePlane, this.model.orthoCamera);
+    }
 
     requestAnimationFrame(this.tick.bind(this));
   }
@@ -35,6 +76,70 @@ export class ProjectedView {
     if (event.key == 't') {
       this.model.screenPlane.rotateY(0.01);
     }
+
+    if (event.key == 'u') {
+      this.toggleUIVisibility();
+    }
+  }
+
+  toggleUIVisibility() {
+    if (this.ui) {
+      this.rootHtml.parentElement.removeChild(this.ui);
+      this.ui = null;
+    } else {
+      this.ui = this.createUI();
+      this.rootHtml.parentElement.appendChild(this.ui);
+    }
+  }
+
+  createUI() {
+    const result = document.createElement('div');
+    result.classList.add('ui');
+
+    const toggleRenderedScene = document.createElement('div');
+    toggleRenderedScene.classList.add('label_button');
+    toggleRenderedScene.innerHTML = 'toggle rendered scene';
+    result.appendChild(toggleRenderedScene);
+
+    //callback
+    const _this = this;
+    toggleRenderedScene.onclick = function () {
+      _this.setRenderingPlane(!_this.renderingPlane);
+    };
+
+    return result;
+  }
+
+  setRenderingPlane(value) {
+    if (value) {
+      this.transformCtrl.dispose();
+      this.transformCtrl = null;
+
+      this.orbitCtrl.dispose();
+      this.orbitCtrl = null;
+    } else {
+      const orbitCtrl = new OrbitControls(
+        this.model.perspectiveCamera,
+        this.rootHtml
+      );
+      this.orbitCtrl = orbitCtrl;
+
+      this.transformCtrl = new TransformControls(
+        this.model.perspectiveCamera,
+        this.rootHtml
+      );
+      this.transformCtrl.addEventListener('change', this.tick.bind(this));
+
+      this.transformCtrl.addEventListener('dragging-changed', function (event) {
+        orbitCtrl.enabled = !event.value;
+      });
+
+      this.model.sceneImages.add(this.transformCtrl);
+
+      //attach mesh when casting ray
+    }
+
+    this.renderingPlane = value;
   }
 
   init() {
@@ -73,7 +178,7 @@ class SceneModel {
       1,
       1000
     );
-    this.orthoCamera.position.set(0, 0, 1);
+    this.orthoCamera.position.set(0, 0, 10);
     this.orthoCamera.lookAt(new THREE.Vector3());
 
     this.bufferTexture = new THREE.WebGLRenderTarget(
@@ -84,16 +189,6 @@ class SceneModel {
         magFilter: THREE.NearestFilter,
       }
     );
-  }
-
-  tick(renderer) {
-    renderer.setRenderTarget(this.bufferTexture);
-    renderer.clear();
-    renderer.render(this.sceneImages, this.perspectiveCamera);
-
-    renderer.setRenderTarget(null);
-    renderer.clear();
-    renderer.render(this.scenePlane, this.orthoCamera);
   }
 
   init() {
@@ -120,6 +215,7 @@ class SceneModel {
 
     const geometry = new THREE.PlaneGeometry(1, 1);
     this.screenPlane = new THREE.Mesh(geometry, materialScreen);
+    this.scenePlane.scale.set(0.5, 0.5, 0.5);
     this.scenePlane.add(this.screenPlane);
 
     //scene images
@@ -128,10 +224,22 @@ class SceneModel {
     const dirLight = new THREE.DirectionalLight();
     dirLight.position.set(10, 10, 10);
     dirLight.lookAt(new THREE.Vector3());
+    dirLight.updateWorldMatrix();
     this.sceneImages.add(dirLight);
 
-    const materialBox = new THREE.MeshBasicMaterial({
-      color: 'red',
+    const directionalLightHelper = new THREE.DirectionalLightHelper(
+      dirLight,
+      50
+    );
+    // this.sceneImages.add(directionalLightHelper);
+
+    const ambientLight = new THREE.AmbientLight('white', 0.5);
+    this.sceneImages.add(ambientLight);
+
+    //box
+
+    const materialBox = new THREE.MeshPhongMaterial({
+      color: 0xff0000, // red (can also use a CSS color string here)
     });
     const geometryBox = new THREE.BoxGeometry(1, 5, 1);
     const box = new THREE.Mesh(geometryBox, materialBox);

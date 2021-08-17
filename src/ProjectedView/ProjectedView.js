@@ -15,6 +15,8 @@ export class ProjectedView {
     this.rootHtml = this.renderer.domElement;
 
     this.renderingPlane = true;
+
+    this.selectedCustomQuad = null;
   }
 
   html() {
@@ -65,10 +67,10 @@ export class ProjectedView {
 
         this.renderer.setRenderTarget(null);
 
-        const left = renderer_width * 0.8;
+        const left = renderer_width * 0.7;
         const top = 0;
-        const width = renderer_width * 0.2;
-        const height = renderer_height * 0.2;
+        const width = renderer_width * 0.3;
+        const height = renderer_height * 0.3;
         this.renderer.setViewport(left, top, width, height);
         this.renderer.setScissor(left, top, width, height);
         this.renderer.render(this.model.scenePlane, this.model.cameraPlane);
@@ -93,12 +95,90 @@ export class ProjectedView {
     }
 
     if (event.key == 'Escape') {
-      if (this.transformCtrl && this.transformCtrl.object)
+      if (this.transformCtrl && this.transformCtrl.object) {
         this.transformCtrl.detach();
+      }
+
+      if (this.selectedCustomQuad) {
+        this.selectedCustomQuad.setSelected(false);
+      }
     }
 
-    if (event.key == 'u') {
-      this.toggleUIVisibility();
+    if (event.key == 'e') {
+      if (this.selectedCustomQuad != this.model.screenPlane) {
+        this.setSelectedCustomQuad(this.model.screenPlane);
+      } else {
+        this.setSelectedCustomQuad(null);
+      }
+    }
+
+    if (event.key == 't') {
+      if (this.transformCtrl) {
+        if (this.transformCtrl.mode == 'translate') {
+          this.transformCtrl.setMode('rotate');
+        } else if (this.transformCtrl.mode == 'rotate') {
+          this.transformCtrl.setMode('scale');
+        } else if (this.transformCtrl.mode == 'scale') {
+          this.transformCtrl.setMode('translate');
+        }
+      }
+    }
+
+    if (event.key == 'i') {
+      this.model.addNewImage();
+    }
+
+    if (event.key == 's') {
+      this.setRenderingPlane(!this.renderingPlane);
+    }
+
+    if (event.key == 'n') {
+      if (this.selectedCustomQuad) {
+        this.selectedCustomQuad.nextPoint();
+      }
+    }
+
+    if (event.key == 'Delete') {
+      if (
+        this.selectedCustomQuad != this.model.screenPlane &&
+        this.selectedCustomQuad instanceof CustomQuad
+      ) {
+        if (this.transformCtrl.object == this.selectedCustomQuad.rootObject)
+          this.transformCtrl.detach();
+
+        // debugger
+        this.selectedCustomQuad.rootObject.removeFromParent();
+      }
+    }
+
+    const step = 0.01;
+
+    if (event.key == 'ArrowUp') {
+      if (this.selectedCustomQuad) {
+        this.selectedCustomQuad.currentPoint.x += step;
+        this.selectedCustomQuad.buildObject3D();
+      }
+    }
+
+    if (event.key == 'ArrowDown') {
+      if (this.selectedCustomQuad) {
+        this.selectedCustomQuad.currentPoint.x -= step;
+        this.selectedCustomQuad.buildObject3D();
+      }
+    }
+
+    if (event.key == 'ArrowRight') {
+      if (this.selectedCustomQuad) {
+        this.selectedCustomQuad.currentPoint.y += step;
+        this.selectedCustomQuad.buildObject3D();
+      }
+    }
+
+    if (event.key == 'ArrowLeft') {
+      if (this.selectedCustomQuad) {
+        this.selectedCustomQuad.currentPoint.y -= step;
+        this.selectedCustomQuad.buildObject3D();
+      }
     }
   }
 
@@ -116,18 +196,31 @@ export class ProjectedView {
     const result = document.createElement('div');
     result.classList.add('ui');
 
-    const toggleRenderedScene = document.createElement('div');
-    toggleRenderedScene.classList.add('label_button');
-    toggleRenderedScene.innerHTML = 'toggle rendered scene';
-    result.appendChild(toggleRenderedScene);
+    const editQuadScreen = document.createElement('div');
+    editQuadScreen.classList.add('label_button');
+    editQuadScreen.innerHTML = 'Edit quad screen';
+    result.appendChild(editQuadScreen);
 
     //callback
     const _this = this;
-    toggleRenderedScene.onclick = function () {
-      _this.setRenderingPlane(!_this.renderingPlane);
+    editQuadScreen.onclick = function () {
+      const sP = _this.model.screenPlane;
+
+      if (!sP.selected) {
+        _this.setSelectedCustomQuad(sP);
+      } else {
+        _this.setSelectedCustomQuad(null);
+      }
     };
 
     return result;
+  }
+
+  setSelectedCustomQuad(quad) {
+    if (this.selectedCustomQuad) this.selectedCustomQuad.setSelected(false);
+
+    this.selectedCustomQuad = quad;
+    if (quad) quad.setSelected(true);
   }
 
   freeze(value) {
@@ -136,6 +229,8 @@ export class ProjectedView {
 
   setRenderingPlane(value) {
     if (value) {
+      // if (this.selectedCustomQuad) this.selectedCustomQuad.setSelected(false);
+
       this.transformCtrl.detach();
       this.transformCtrl.dispose();
       this.transformCtrl = null;
@@ -194,7 +289,12 @@ export class ProjectedView {
         }
       });
 
+      while (p.parent && !p.userData.customQuad) {
+        p = p.parent;
+      }
+
       this.transformCtrl.attach(p);
+      this.setSelectedCustomQuad(p.userData.customQuad);
     }
   }
 
@@ -230,8 +330,8 @@ class SceneModel {
 
     this.defaultcameraImages = this.cameraImages.clone();
 
-    const width = 1;
-    const height = 1;
+    const width = 2;
+    const height = 2;
 
     this.cameraPlane = new THREE.OrthographicCamera(
       width / -2,
@@ -255,6 +355,11 @@ class SceneModel {
   }
 
   init() {
+    this.initScenePlane();
+    this.initSceneImages();
+  }
+
+  initScenePlane() {
     const vertexString =
       'varying vec2 vUv;' +
       'void main() {' +
@@ -268,7 +373,8 @@ class SceneModel {
         'varying vec2 vUv;' +
         'uniform sampler2D tDiffuse;' +
         'void main() {' +
-        'gl_FragColor = texture2D( tDiffuse, vUv );' +
+        'gl_FragColor = texture2D( tDiffuse, vUv);' +
+        // 'gl_FragColor = vec4(vUv ,0.0,1.0);' +
         // 'gl_FragColor = vec4(1,0,0,1);' +
         '}',
       vertexShader: vertexString,
@@ -276,11 +382,26 @@ class SceneModel {
       depthWrite: false,
     });
 
-    const geometry = new THREE.PlaneGeometry(1, 1);
-    this.screenPlane = new THREE.Mesh(geometry, materialScreen);
-    this.scenePlane.scale.set(0.5, 0.5, 0.5);
-    this.scenePlane.add(this.screenPlane);
+    this.screenPlane = new CustomQuad(new THREE.Object3D(), materialScreen);
 
+    this.scenePlane.add(this.screenPlane.rootObject);
+  }
+
+  addNewImage() {
+    const url = window.prompt('url ?');
+
+    const textureLoader = new THREE.TextureLoader();
+    textureLoader.crossOrigin = 'Anonymous';
+    const myTexture = textureLoader.load(url);
+
+    const mat = new THREE.MeshBasicMaterial({
+      map: myTexture,
+    });
+    const imageQuad = new CustomQuad(new THREE.Object3D(), mat);
+    this.imagesObject.add(imageQuad.rootObject);
+  }
+
+  initSceneImages() {
     //scene images
     this.sceneImages.background = new THREE.Color(0xffffff);
 
@@ -303,15 +424,145 @@ class SceneModel {
     imagesObject.name = 'images_obj';
     this.imagesObject = imagesObject;
     this.sceneImages.add(imagesObject);
+  }
+}
 
-    //box
+class CustomQuad {
+  constructor(
+    rootObject,
+    material,
+    topLeft = new THREE.Vector2(-1, 1),
+    topRight = new THREE.Vector2(1, 1),
+    bottomRight = new THREE.Vector2(1, -1),
+    bottomLeft = new THREE.Vector2(-1, -1)
+  ) {
+    this.rootObject = rootObject;
+    this.rootObject.name = 'root_CustomQuad';
+    this.rootObject.userData.customQuad = this;
 
-    const materialBox = new THREE.MeshPhongMaterial({
-      color: 0xff0000, // red (can also use a CSS color string here)
-    });
-    const geometryBox = new THREE.BoxGeometry(1, 5, 1);
-    const box = new THREE.Mesh(geometryBox, materialBox);
-    imagesObject.add(box);
-    box.rotateY(Math.PI / 4);
+    this.rootSelected = new THREE.Object3D();
+    this.rootQuad = new THREE.Object3D();
+
+    this.rootObject.add(this.rootQuad);
+    this.rootObject.add(this.rootSelected);
+
+    this.material = material;
+
+    this.topLeft = topLeft;
+    this.topRight = topRight;
+    this.bottomRight = bottomRight;
+    this.bottomLeft = bottomLeft;
+
+    this.selected = false;
+    this.currentPoint = null;
+    this.spherePoint = new THREE.Mesh(
+      new THREE.SphereGeometry(0.05, 32, 16),
+      new THREE.MeshBasicMaterial({ color: 0xffff00 })
+    );
+
+    this.buildObject3D();
+  }
+
+  createHtmlController() {
+    const result = document.createElement('div');
+    return result;
+  }
+
+  setSelected(value) {
+    if (value == this.selected) return;
+
+    this.selected = value;
+
+    if (this.selected) {
+      this.setCurrentPoint(this.topLeft);
+    }
+
+    this.buildObject3D();
+  }
+
+  setCurrentPoint(p) {
+    this.currentPoint = p;
+    this.spherePoint.position.set(p.x, p.y, 0);
+  }
+
+  nextPoint() {
+    if (this.currentPoint == this.topLeft) {
+      this.setCurrentPoint(this.topRight);
+    } else if (this.currentPoint == this.topRight) {
+      this.setCurrentPoint(this.bottomRight);
+    } else if (this.currentPoint == this.bottomRight) {
+      this.setCurrentPoint(this.bottomLeft);
+    } else if (this.currentPoint == this.bottomLeft) {
+      this.setCurrentPoint(this.topLeft);
+    }
+  }
+
+  buildLine(start, end) {
+    const dirCst = 10;
+    const dir = end.clone().sub(start).normalize();
+
+    //build line
+    // geometry
+    const geometry = new THREE.BufferGeometry();
+
+    // attributes
+    const positions = new Float32Array(2 * 3); // 3 vertices per point
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+    positions[0] = start.x - dirCst * dir.x;
+    positions[1] = start.y - dirCst * dir.y;
+    positions[2] = 0;
+
+    positions[3] = end.x + dirCst * dir.x;
+    positions[4] = end.y + dirCst * dir.y;
+    positions[5] = 0;
+
+    // material
+    const material = new THREE.LineBasicMaterial({ color: 0xff0000 });
+
+    // line
+    const line = new THREE.Line(geometry, material);
+
+    return line;
+  }
+
+  buildObject3D() {
+    //lines
+    this.rootSelected.children.length = 0;
+    if (this.selected) {
+      this.rootSelected.add(this.buildLine(this.topLeft, this.topRight));
+      this.rootSelected.add(this.buildLine(this.topRight, this.bottomRight));
+      this.rootSelected.add(this.buildLine(this.bottomRight, this.bottomLeft));
+      this.rootSelected.add(this.buildLine(this.bottomLeft, this.topLeft));
+
+      //add sphere current point
+      this.setCurrentPoint(this.currentPoint); //force sphere position
+      this.rootSelected.add(this.spherePoint);
+    }
+
+    this.rootQuad.children.length = 0;
+
+    const shape = new THREE.Shape([
+      this.topLeft,
+      this.topRight,
+      this.bottomRight,
+      this.bottomLeft,
+    ]);
+
+    const geometry = new THREE.ShapeGeometry(shape);
+
+    //compute uv
+    const uv = geometry.attributes.uv.array;
+    uv[0] = 0;
+    uv[1] = 1;
+    uv[2] = 1;
+    uv[3] = 1;
+    uv[4] = 1;
+    uv[5] = 0;
+    uv[6] = 0;
+    uv[7] = 0;
+
+    const mesh = new THREE.Mesh(geometry, this.material);
+    this.rootQuad.add(mesh);
   }
 }
